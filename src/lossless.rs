@@ -11,7 +11,7 @@
 
 use crate::RCode;
 use deb822_lossless::Paragraph;
-pub use relations::{Relation, Relations};
+pub use relations::{Relation, Relations, Version};
 
 /// R DESCRIPTION file
 pub struct RDescription(Paragraph);
@@ -203,15 +203,13 @@ impl RDescription {
     }
 
     /// Return the imports field
-    pub fn imports(&self) -> Option<Vec<String>> {
-        self.0
-            .get("Imports")
-            .map(|s| s.split(',').map(|s| s.trim().to_string()).collect())
+    pub fn imports(&self) -> Option<Relations> {
+        self.0.get("Imports").map(|s| s.parse().unwrap())
     }
 
     /// Set the imports field
-    pub fn set_imports(&mut self, imports: &[&str]) {
-        self.0.insert("Imports", &imports.join(", "));
+    pub fn set_imports(&mut self, imports: Relations) {
+        self.0.insert("Imports", &imports.to_string());
     }
 
     /// Return the suggests field
@@ -235,15 +233,23 @@ impl RDescription {
     }
 
     /// Return the linking-to field
-    pub fn linking_to(&self) -> Option<Vec<String>> {
-        self.0
-            .get("LinkingTo")
-            .map(|s| s.split(',').map(|s| s.trim().to_string()).collect())
+    pub fn linking_to(&self) -> Option<Relations> {
+        self.0.get("LinkingTo").map(|s| s.parse().unwrap())
     }
 
     /// Set the linking-to field
-    pub fn set_linking_to(&mut self, linking_to: &[&str]) {
-        self.0.insert("LinkingTo", &linking_to.join(", "));
+    pub fn set_linking_to(&mut self, linking_to: Relations) {
+        self.0.insert("LinkingTo", &linking_to.to_string());
+    }
+
+    /// Return the enhances field
+    pub fn enhances(&self) -> Option<Relations> {
+        self.0.get("Enhances").map(|s| s.parse().unwrap())
+    }
+
+    /// Set the enhances field
+    pub fn set_enhances(&mut self, enhances: Relations) {
+        self.0.insert("Enhances", &enhances.to_string());
     }
 
     /// Return the lazy data field
@@ -337,8 +343,111 @@ pub mod relations {
     //! ```
     use crate::relations::SyntaxKind::{self, *};
     use crate::relations::VersionConstraint;
-    use crate::version::Version;
+    use crate::version::Version as LossyVersion;
     use rowan::{Direction, NodeOrToken};
+    use std::cmp::Ordering;
+    use std::hash::{Hash, Hasher};
+
+    #[derive(Debug, Clone)]
+    /// Represents an R version string while preserving its original separators.
+    ///
+    /// R treats `.` and `-` as equivalent separators for comparison, but callers may
+    /// need to round-trip the exact spelling from DESCRIPTION relationship fields.
+    pub struct Version {
+        /// Version components like [1, 2, 3]
+        pub components: Vec<u32>,
+        original: String,
+    }
+
+    impl Version {
+        /// Return the original version string.
+        pub fn as_str(&self) -> &str {
+            &self.original
+        }
+    }
+
+    impl std::fmt::Display for Version {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str(&self.original)
+        }
+    }
+
+    impl std::str::FromStr for Version {
+        type Err = String;
+
+        fn from_str(s: &str) -> Result<Self, Self::Err> {
+            let components = s
+                .split(|c| c == '.' || c == '-')
+                .map(|part| {
+                    part.parse()
+                        .map_err(|_| format!("Invalid version component: {s}"))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+
+            if components.len() < 2 {
+                return Err(format!("Invalid version string: {s}"));
+            }
+
+            Ok(Self {
+                components,
+                original: s.to_string(),
+            })
+        }
+    }
+
+    impl From<Version> for LossyVersion {
+        fn from(version: Version) -> Self {
+            Self {
+                components: version.components,
+            }
+        }
+    }
+
+    impl From<LossyVersion> for Version {
+        fn from(version: LossyVersion) -> Self {
+            let original = version.to_string();
+            Self {
+                components: version.components,
+                original,
+            }
+        }
+    }
+
+    impl PartialEq for Version {
+        fn eq(&self, other: &Self) -> bool {
+            self.components == other.components
+        }
+    }
+
+    impl Eq for Version {}
+
+    impl Hash for Version {
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            self.components.hash(state);
+        }
+    }
+
+    impl Ord for Version {
+        fn cmp(&self, other: &Self) -> Ordering {
+            compare_components(&self.components, &other.components)
+        }
+    }
+
+    impl PartialOrd for Version {
+        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+            Some(self.cmp(other))
+        }
+    }
+
+    fn compare_components(a_components: &[u32], b_components: &[u32]) -> Ordering {
+        for (a, b) in a_components.iter().zip(b_components.iter()) {
+            match a.cmp(b) {
+                Ordering::Equal => continue,
+                ordering => return ordering,
+            }
+        }
+        a_components.len().cmp(&b_components.len())
+    }
 
     /// Error type for parsing relations fields
     #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -832,7 +941,9 @@ pub mod relations {
         fn from(relation: Relation) -> Self {
             let mut rel = crate::lossy::Relation::new();
             rel.name = relation.name();
-            rel.version = relation.version();
+            rel.version = relation
+                .version()
+                .map(|(constraint, version)| (constraint, version.into()));
             rel
         }
     }
@@ -859,7 +970,12 @@ pub mod relations {
 
     impl From<crate::lossy::Relation> for Relation {
         fn from(relation: crate::lossy::Relation) -> Self {
-            Relation::new(&relation.name, relation.version)
+            Relation::new(
+                &relation.name,
+                relation
+                    .version
+                    .map(|(constraint, version)| (constraint, version.into())),
+            )
         }
     }
 
@@ -1168,17 +1284,15 @@ pub mod relations {
             let version = self.version();
             if let Some(version) = version {
                 if let Some(package_version) = package_version.lookup_version(&name) {
+                    let required: LossyVersion = version.1.into();
+                    let actual = package_version.into_owned();
                     match version.0 {
-                        VersionConstraint::GreaterThanEqual => {
-                            package_version.into_owned() >= version.1
-                        }
-                        VersionConstraint::LessThanEqual => {
-                            package_version.into_owned() <= version.1
-                        }
-                        VersionConstraint::Equal => package_version.into_owned() == version.1,
-                        VersionConstraint::NotEqual => package_version.into_owned() != version.1,
-                        VersionConstraint::GreaterThan => package_version.into_owned() > version.1,
-                        VersionConstraint::LessThan => package_version.into_owned() < version.1,
+                        VersionConstraint::GreaterThanEqual => actual >= required,
+                        VersionConstraint::LessThanEqual => actual <= required,
+                        VersionConstraint::Equal => actual == required,
+                        VersionConstraint::NotEqual => actual != required,
+                        VersionConstraint::GreaterThan => actual > required,
+                        VersionConstraint::LessThan => actual < required,
                     }
                 } else {
                     false
@@ -1517,9 +1631,19 @@ pub mod relations {
         }
 
         #[test]
+        fn test_parse_relation_preserves_version_separators() {
+            let parsed: Relation = "cli (>= 2.5-1)".parse().unwrap();
+            let (_, version) = parsed.version().unwrap();
+
+            assert_eq!(version.to_string(), "2.5-1");
+            assert_eq!(parsed.wrap_and_sort().to_string(), "cli (>= 2.5-1)");
+            assert_eq!(version, "2.5.1".parse::<Version>().unwrap());
+        }
+
+        #[test]
         fn test_relations_satisfied_by() {
             let rels: Relations = "cli (>= 0.20.21), cli (< 0.21)".parse().unwrap();
-            let satisfied = |name: &str| -> Option<Version> {
+            let satisfied = |name: &str| -> Option<LossyVersion> {
                 match name {
                     "cli" => Some("0.20.21".parse().unwrap()),
                     _ => None,
@@ -1686,6 +1810,54 @@ comment = c(ORCID = "YOUR-ORCID-ID"))"#
         assert_eq!(
             "https://dplyr.tidyverse.org, https://github.com/tidyverse/dplyr",
             desc.url().unwrap().as_str()
+        );
+    }
+
+    #[test]
+    fn test_dependency_style_fields_return_relations() {
+        let s = r###"Package: mypackage
+Title: What the Package Does
+Version: 1.0.0
+Description: What the package does.
+License: MIT
+Imports: cli (>= 2.5-1), glue
+Suggests: testthat (>= 3.0.0)
+Depends: R (>= 4.1.0)
+LinkingTo: cpp11 (>= 0.4-1)
+Enhances: shiny
+"###;
+        let desc: RDescription = s.parse().unwrap();
+
+        let imports = desc.imports().unwrap();
+        assert_eq!(imports.len(), 2);
+        assert_eq!(
+            imports
+                .iter()
+                .next()
+                .unwrap()
+                .version()
+                .unwrap()
+                .1
+                .to_string(),
+            "2.5-1"
+        );
+        assert_eq!(desc.suggests().unwrap().len(), 1);
+        assert_eq!(desc.depends().unwrap().len(), 1);
+        assert_eq!(
+            desc.linking_to()
+                .unwrap()
+                .iter()
+                .next()
+                .unwrap()
+                .version()
+                .unwrap()
+                .1
+                .to_string(),
+            "0.4-1"
+        );
+        assert_eq!(
+            desc.enhances().unwrap().iter().next().unwrap().name(),
+            "shiny"
         );
     }
 }
