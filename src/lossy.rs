@@ -75,6 +75,24 @@ fn deserialize_url_list(s: &str) -> Result<Vec<UrlEntry>, String> {
         .map_err(|e| e.to_string())
 }
 
+fn serialize_repository_list(repositories: &[url::Url]) -> String {
+    let mut s = String::new();
+    for (i, repository) in repositories.iter().enumerate() {
+        if i > 0 {
+            s.push_str(", ");
+        }
+        s.push_str(repository.as_str());
+    }
+    s
+}
+
+fn deserialize_repository_list(s: &str) -> Result<Vec<url::Url>, String> {
+    s.split([',', '\n'].as_ref())
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| url::Url::parse(s.trim()).map_err(|e| e.to_string()))
+        .collect()
+}
+
 #[derive(FromDeb822, ToDeb822, Debug, PartialEq, Eq)]
 /// A DESCRIPTION file.
 pub struct RDescription {
@@ -171,6 +189,10 @@ pub struct RDescription {
     #[deb822(field = "Repository")]
     /// The R Repository to use for this package. E.g. "CRAN" or "Bioconductor"
     pub repository: Option<String>,
+
+    #[deb822(field = "Additional_repositories", serialize_with = serialize_repository_list, deserialize_with = deserialize_repository_list)]
+    /// Additional repositories where dependency packages may be found.
+    pub additional_repositories: Option<Vec<url::Url>>,
 }
 
 /// A relation entry in a relationship field.
@@ -735,5 +757,37 @@ License: `use_mit_license()`, `use_gpl3_license()` or friends to pick a
         assert_eq!(parsed[1].label, Some("Example".to_string()));
         assert_eq!(parsed[2].url.as_str(), "https://example.net/");
         assert_eq!(parsed[2].label, None);
+    }
+
+    #[test]
+    fn test_deserialize_repository_list() {
+        let input = "https://example.com/src/contrib,\n https://example.org/src/contrib";
+        let parsed = deserialize_repository_list(input).unwrap();
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].as_str(), "https://example.com/src/contrib");
+        assert_eq!(parsed[1].as_str(), "https://example.org/src/contrib");
+    }
+
+    #[test]
+    fn test_parse_additional_repositories() {
+        let s = r###"Package: mypackage
+Title: What the Package Does
+Version: 1.0.0
+Description: What the package does.
+License: MIT
+Additional_repositories: https://example.com/src/contrib,
+ https://example.org/src/contrib
+"###;
+        let desc: RDescription = s.parse().unwrap();
+
+        let repositories = desc.additional_repositories.as_ref().unwrap();
+        assert_eq!(repositories.len(), 2);
+        assert_eq!(repositories[0].as_str(), "https://example.com/src/contrib");
+        assert_eq!(repositories[1].as_str(), "https://example.org/src/contrib");
+
+        assert_eq!(
+            desc.to_string(),
+            "Package: mypackage\nDescription: What the package does.\nTitle: What the Package Does\nVersion: 1.0.0\nLicense: MIT\nAdditional_repositories: https://example.com/src/contrib, https://example.org/src/contrib\n"
+        );
     }
 }
