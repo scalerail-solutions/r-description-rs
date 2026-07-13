@@ -3,6 +3,15 @@
 This crate provides a parser and editor for the `DESCRIPTION` files used in R
 packages.
 
+This is the Scalerail fork, published as
+[`r-description-scalerail`](https://crates.io/crates/r-description-scalerail).
+To switch from upstream without changing Rust imports, alias the dependency:
+
+```toml
+[dependencies]
+r-description = { package = "r-description-scalerail", version = "0.4" }
+```
+
 See <https://r-pkgs.org/description.html> and
 <https://cran.r-project.org/doc/manuals/R-exts.html> for more information on
 the format.
@@ -10,6 +19,16 @@ the format.
 Besides parsing the control files it also supports parsing and comparison
 of version strings according to the R package versioning scheme as well
 as relations between versions.
+
+## Releases
+
+Releases are published when a tag matching the package version is pushed, for
+example `v0.4.0`. Before the first release, configure crates.io Trusted
+Publishing for `r-description-scalerail` with the
+`scalerail-solutions/r-description-rs` repository and the
+`.github/workflows/release.yml` workflow. The release workflow then obtains a
+short-lived crates.io token via GitHub Actions OIDC; no registry token needs to
+be stored as a GitHub secret.
 
 ## Example
 
