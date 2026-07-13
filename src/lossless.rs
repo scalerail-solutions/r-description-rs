@@ -10,7 +10,7 @@
 //! See https://r-pkgs.org/description.html for more information.
 
 use crate::RCode;
-use deb822_lossless::{Deb822, Paragraph, Parse as Deb822Parse};
+use deb822_lossless::{Deb822, IndentPattern, Paragraph, Parse as Deb822Parse};
 pub use relations::{Relation, Relations, Version};
 use rowan::ast::AstNode;
 use std::cmp::Ordering;
@@ -122,6 +122,27 @@ impl RDescription {
             deb822.syntax().green().into_owned()
         };
         self.0 = Deb822Parse::new(green, Vec::new());
+    }
+
+    fn set_multiline_field(&mut self, key: &str, value: &str) {
+        let deb822 = self.deb822();
+        let (mut paragraph, had_paragraph) = if let Some(paragraph) = deb822.paragraphs().next() {
+            (paragraph, true)
+        } else {
+            (Paragraph::new(), false)
+        };
+        paragraph.set_with_forced_indent(key, value, &IndentPattern::Fixed(4), None);
+        let green = if had_paragraph {
+            deb822.syntax().green().into_owned()
+        } else {
+            let deb822 = vec![paragraph].into_iter().collect::<Deb822>();
+            deb822.syntax().green().into_owned()
+        };
+        self.0 = Deb822Parse::new(green, Vec::new());
+    }
+
+    fn format_relations(relations: Relations) -> String {
+        Relations::from(relations.relations().collect::<Vec<_>>()).to_string()
     }
 
     fn remove_field(&mut self, key: &str) {
@@ -272,7 +293,7 @@ impl RDescription {
 
     /// Set the imports field
     pub fn set_imports(&mut self, imports: Relations) {
-        self.set_field("Imports", &imports.to_string());
+        self.set_multiline_field("Imports", &Self::format_relations(imports));
     }
 
     /// Return the suggests field
@@ -282,7 +303,7 @@ impl RDescription {
 
     /// Set the suggests field
     pub fn set_suggests(&mut self, suggests: Relations) {
-        self.set_field("Suggests", &suggests.to_string());
+        self.set_multiline_field("Suggests", &Self::format_relations(suggests));
     }
 
     /// Return the depends field
@@ -292,7 +313,7 @@ impl RDescription {
 
     /// Set the depends field
     pub fn set_depends(&mut self, depends: Relations) {
-        self.set_field("Depends", &depends.to_string());
+        self.set_multiline_field("Depends", &Self::format_relations(depends));
     }
 
     /// Return the linking-to field
@@ -302,7 +323,7 @@ impl RDescription {
 
     /// Set the linking-to field
     pub fn set_linking_to(&mut self, linking_to: Relations) {
-        self.set_field("LinkingTo", &linking_to.to_string());
+        self.set_multiline_field("LinkingTo", &Self::format_relations(linking_to));
     }
 
     /// Return the enhances field
@@ -312,7 +333,7 @@ impl RDescription {
 
     /// Set the enhances field
     pub fn set_enhances(&mut self, enhances: Relations) {
-        self.set_field("Enhances", &enhances.to_string());
+        self.set_multiline_field("Enhances", &Self::format_relations(enhances));
     }
 
     /// Return the lazy data field
@@ -394,7 +415,7 @@ impl RDescription {
         if repositories.is_empty() {
             self.remove_field("Additional_repositories");
         } else {
-            self.set_field("Additional_repositories", &repositories.join(", "));
+            self.set_multiline_field("Additional_repositories", &repositories.join(",\n"));
         }
     }
 }
@@ -959,6 +980,7 @@ pub mod relations {
             let relation = Relation::cast(relation_node.clone()).unwrap();
             remove_relation_node(&relation_node);
             self.0 = node.green().into_owned();
+            self.format();
             relation
         }
 
@@ -998,6 +1020,7 @@ pub mod relations {
             self.0 = node
                 .green()
                 .splice_children(position..position, new_children);
+            self.format();
         }
 
         /// Replace the relation at the given index
@@ -1013,6 +1036,7 @@ pub mod relations {
                 vec![SyntaxNode::new_root_mut(relation.0).into()],
             );
             self.0 = node.green().into_owned();
+            self.format();
         }
 
         /// Push a new relation to the relations field
@@ -1044,6 +1068,18 @@ pub mod relations {
         pub fn len(&self) -> usize {
             self.relations().count()
         }
+
+        fn format(&mut self) {
+            let node = self.syntax_node();
+            if node
+                .children_with_tokens()
+                .any(|child| child.kind() == ERROR)
+            {
+                return;
+            }
+
+            *self = Self::from(self.relations().collect::<Vec<_>>());
+        }
     }
 
     impl From<Vec<Relation>> for Relations {
@@ -1053,7 +1089,7 @@ pub mod relations {
             for (i, relation) in entries.into_iter().enumerate() {
                 if i > 0 {
                     builder.token(COMMA.into(), ",");
-                    builder.token(WHITESPACE.into(), " ");
+                    builder.token(NEWLINE.into(), "\n");
                 }
                 inject(&mut builder, relation.syntax_node());
             }
@@ -1653,7 +1689,7 @@ pub mod relations {
             let mut rels: Relations =
                 r#"cli (>= 0.20.21), cli (< 0.21), cli (< 0.22)"#.parse().unwrap();
             rels.remove_relation(1);
-            assert_eq!(rels.to_string(), "cli (>= 0.20.21), cli (< 0.22)");
+            assert_eq!(rels.to_string(), "cli (>= 0.20.21),\ncli (< 0.22)");
         }
 
         #[test]
@@ -1670,7 +1706,7 @@ pub mod relations {
             let mut rels: Relations = r#"cli (>= 0.20.21)"#.parse().unwrap();
             let relation = Relation::simple("cli");
             rels.push(relation);
-            assert_eq!(rels.to_string(), "cli (>= 0.20.21), cli");
+            assert_eq!(rels.to_string(), "cli (>= 0.20.21),\ncli");
         }
 
         #[test]
@@ -1686,7 +1722,7 @@ pub mod relations {
             let mut rels: Relations = r#"cli (>= 0.20.21), cli (< 0.21)"#.parse().unwrap();
             let relation = Relation::simple("cli");
             rels.insert(1, relation);
-            assert_eq!(rels.to_string(), "cli (>= 0.20.21), cli, cli (< 0.21)");
+            assert_eq!(rels.to_string(), "cli (>= 0.20.21),\ncli,\ncli (< 0.21)");
         }
 
         #[test]
@@ -1694,7 +1730,7 @@ pub mod relations {
             let mut rels: Relations = r#"cli (>= 0.20.21), cli (< 0.21)"#.parse().unwrap();
             let relation = Relation::simple("cli");
             rels.insert(0, relation);
-            assert_eq!(rels.to_string(), "cli, cli (>= 0.20.21), cli (< 0.21)");
+            assert_eq!(rels.to_string(), "cli,\ncli (>= 0.20.21),\ncli (< 0.21)");
         }
 
         #[test]
@@ -1734,7 +1770,7 @@ pub mod relations {
             let mut rels: Relations = r#"cli (>= 0.20.21), cli (< 0.21)"#.parse().unwrap();
             let relation = Relation::simple("cli");
             rels.replace(1, relation);
-            assert_eq!(rels.to_string(), "cli (>= 0.20.21), cli");
+            assert_eq!(rels.to_string(), "cli (>= 0.20.21),\ncli");
         }
 
         #[test]
@@ -1746,7 +1782,7 @@ pub mod relations {
             cloned.push(Relation::simple("glue"));
 
             assert_eq!(rels.to_string(), "cli (>= 0.20.21), cli (< 0.21)");
-            assert_eq!(cloned.to_string(), "cli (>= 0.20.21), cli (< 0.21), glue");
+            assert_eq!(cloned.to_string(), "cli (>= 0.20.21),\ncli (< 0.21),\nglue");
         }
 
         #[test]
@@ -1857,7 +1893,7 @@ pub mod relations {
 
             let wrapped = relations.wrap_and_sort();
 
-            assert_eq!(wrapped.to_string(), "cli (< 0.21), cli (>= 0.20.21)");
+            assert_eq!(wrapped.to_string(), "cli (< 0.21),\ncli (>= 0.20.21)");
         }
 
         #[cfg(feature = "serde")]
@@ -1921,7 +1957,7 @@ pub mod relations {
         fn test_wrap_and_sort_removes_empty_entries() {
             let relations: Relations = "foo, , bar, ".parse().unwrap();
             let wrapped = relations.wrap_and_sort();
-            assert_eq!(wrapped.to_string(), "bar, foo");
+            assert_eq!(wrapped.to_string(), "bar,\nfoo");
         }
     }
 }
@@ -2121,7 +2157,7 @@ License: MIT
         );
         assert_eq!(
             desc.to_string(),
-            "Package: mypackage\nTitle: What the Package Does\nVersion: 1.0.0\nDescription: What the package does.\nLicense: MIT\nAdditional_repositories: https://example.com/src/contrib, https://example.org/src/contrib\n"
+            "Package: mypackage\nTitle: What the Package Does\nVersion: 1.0.0\nDescription: What the package does.\nLicense: MIT\nAdditional_repositories: https://example.com/src/contrib,\n    https://example.org/src/contrib\n"
         );
     }
 
@@ -2167,6 +2203,18 @@ Imports: cli
         assert_eq!(
             rendered,
             "Package: mypackage\nTitle: What the Package Does\nVersion: 1.0.0\nDescription: What the package does.\nLicense: MIT\nImports: glue\n"
+        );
+    }
+
+    #[test]
+    fn test_set_imports_formats_multiple_relations() {
+        let mut desc: RDescription = "Package: mypackage\n".parse().unwrap();
+
+        desc.set_imports("cli (>= 3.4.0), glue".parse().unwrap());
+
+        assert_eq!(
+            desc.to_string(),
+            "Package: mypackage\nImports: cli (>= 3.4.0),\n    glue\n"
         );
     }
 }
