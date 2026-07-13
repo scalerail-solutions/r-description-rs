@@ -230,7 +230,7 @@ dependencies = [
 
 [[package]]
 name = "r-description-scalerail"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "deb822-derive",
  "deb822-fast",
