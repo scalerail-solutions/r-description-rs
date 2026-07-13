@@ -20,16 +20,6 @@ Besides parsing the control files it also supports parsing and comparison
 of version strings according to the R package versioning scheme as well
 as relations between versions.
 
-## Releases
-
-Releases are published when a tag matching the package version is pushed, for
-example `v0.4.0`. Before the first release, configure crates.io Trusted
-Publishing for `r-description-scalerail` with the
-`scalerail-solutions/r-description-rs` repository and the
-`.github/workflows/release.yml` workflow. The release workflow then obtains a
-short-lived crates.io token via GitHub Actions OIDC; no registry token needs to
-be stored as a GitHub secret.
-
 ## Example
 
 ```rust
