@@ -10,7 +10,7 @@
 //! See https://r-pkgs.org/description.html for more information.
 
 use crate::RCode;
-use deb822_lossless::{Deb822, IndentPattern, Paragraph, Parse as Deb822Parse};
+use deb822_lossless::{Deb822, Entry, IndentPattern, Paragraph, Parse as Deb822Parse};
 pub use relations::{Relation, Relations, Version};
 use rowan::ast::AstNode;
 use std::cmp::Ordering;
@@ -131,7 +131,33 @@ impl RDescription {
         } else {
             (Paragraph::new(), false)
         };
-        paragraph.set_with_forced_indent(key, value, &IndentPattern::Fixed(4), None);
+        if value.contains('\n') {
+            let existing_entry = paragraph.entries().find(|entry| {
+                entry
+                    .key()
+                    .as_deref()
+                    .is_some_and(|entry_key| entry_key == key)
+            });
+            let actual_key = existing_entry
+                .as_ref()
+                .and_then(|entry| entry.key())
+                .unwrap_or_else(|| key.to_string());
+            let entry = Entry::with_formatting(&actual_key, value, "\n    ", "    ");
+
+            if let Some(existing_entry) = existing_entry {
+                let index = existing_entry.syntax().index();
+                paragraph
+                    .syntax()
+                    .splice_children(index..index + 1, vec![entry.syntax().clone().into()]);
+            } else {
+                let index = paragraph.syntax().children_with_tokens().count();
+                paragraph
+                    .syntax()
+                    .splice_children(index..index, vec![entry.syntax().clone().into()]);
+            }
+        } else {
+            paragraph.set_with_forced_indent(key, value, &IndentPattern::Fixed(4), None);
+        }
         let green = if had_paragraph {
             deb822.syntax().green().into_owned()
         } else {
@@ -2157,7 +2183,7 @@ License: MIT
         );
         assert_eq!(
             desc.to_string(),
-            "Package: mypackage\nTitle: What the Package Does\nVersion: 1.0.0\nDescription: What the package does.\nLicense: MIT\nAdditional_repositories: https://example.com/src/contrib,\n    https://example.org/src/contrib\n"
+            "Package: mypackage\nTitle: What the Package Does\nVersion: 1.0.0\nDescription: What the package does.\nLicense: MIT\nAdditional_repositories:\n    https://example.com/src/contrib,\n    https://example.org/src/contrib\n"
         );
     }
 
@@ -2214,7 +2240,7 @@ Imports: cli
 
         assert_eq!(
             desc.to_string(),
-            "Package: mypackage\nImports: cli (>= 3.4.0),\n    glue\n"
+            "Package: mypackage\nImports:\n    cli (>= 3.4.0),\n    glue\n"
         );
     }
 }
