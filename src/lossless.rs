@@ -319,7 +319,11 @@ impl RDescription {
 
     /// Set the imports field
     pub fn set_imports(&mut self, imports: Relations) {
-        self.set_multiline_field("Imports", &Self::format_relations(imports));
+        if imports.is_empty() {
+            self.remove_field("Imports");
+        } else {
+            self.set_multiline_field("Imports", &Self::format_relations(imports));
+        }
     }
 
     /// Return the suggests field
@@ -329,7 +333,11 @@ impl RDescription {
 
     /// Set the suggests field
     pub fn set_suggests(&mut self, suggests: Relations) {
-        self.set_multiline_field("Suggests", &Self::format_relations(suggests));
+        if suggests.is_empty() {
+            self.remove_field("Suggests");
+        } else {
+            self.set_multiline_field("Suggests", &Self::format_relations(suggests));
+        }
     }
 
     /// Return the depends field
@@ -339,7 +347,11 @@ impl RDescription {
 
     /// Set the depends field
     pub fn set_depends(&mut self, depends: Relations) {
-        self.set_multiline_field("Depends", &Self::format_relations(depends));
+        if depends.is_empty() {
+            self.remove_field("Depends");
+        } else {
+            self.set_multiline_field("Depends", &Self::format_relations(depends));
+        }
     }
 
     /// Return the linking-to field
@@ -349,7 +361,11 @@ impl RDescription {
 
     /// Set the linking-to field
     pub fn set_linking_to(&mut self, linking_to: Relations) {
-        self.set_multiline_field("LinkingTo", &Self::format_relations(linking_to));
+        if linking_to.is_empty() {
+            self.remove_field("LinkingTo");
+        } else {
+            self.set_multiline_field("LinkingTo", &Self::format_relations(linking_to));
+        }
     }
 
     /// Return the enhances field
@@ -359,7 +375,11 @@ impl RDescription {
 
     /// Set the enhances field
     pub fn set_enhances(&mut self, enhances: Relations) {
-        self.set_multiline_field("Enhances", &Self::format_relations(enhances));
+        if enhances.is_empty() {
+            self.remove_field("Enhances");
+        } else {
+            self.set_multiline_field("Enhances", &Self::format_relations(enhances));
+        }
     }
 
     /// Return the lazy data field
@@ -2230,6 +2250,25 @@ Imports: cli
             rendered,
             "Package: mypackage\nTitle: What the Package Does\nVersion: 1.0.0\nDescription: What the package does.\nLicense: MIT\nImports: glue\n"
         );
+    }
+
+    #[test]
+    fn test_set_empty_imports_removes_field_and_round_trips() {
+        let mut desc: RDescription = r###"Package: testpkg
+Version: 0.1.0
+Title: Test Package
+Description: Test package.
+License: MIT
+Imports: digest
+"###
+        .parse()
+        .unwrap();
+
+        desc.set_imports(Relations::default());
+
+        let rendered = desc.to_string();
+        assert!(!rendered.contains("Imports:"));
+        assert!(rendered.parse::<RDescription>().is_ok());
     }
 
     #[test]
